@@ -43,6 +43,12 @@ resources:
           default: ${var.vs_endpoint}
         - name: vs_index
           default: ${var.vs_index}
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "2"
+            dependencies:
+              - databricks-vectorsearch
       tasks:
         - task_key: ingest
           pipeline_task:
@@ -50,6 +56,7 @@ resources:
         - task_key: parse_chunk
           depends_on:
             - task_key: ingest
+          environment_key: default
           notebook_task:
             notebook_path: ../notebooks/02_parse_and_chunk.sql
         # Remove this task if you use Knowledge Assistant only. The notebook also exits cleanly
@@ -57,5 +64,6 @@ resources:
         - task_key: sync_index
           depends_on:
             - task_key: parse_chunk
+          environment_key: default
           notebook_task:
             notebook_path: ../notebooks/03_sync_vector_index.py

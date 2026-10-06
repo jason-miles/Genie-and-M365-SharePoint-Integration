@@ -128,10 +128,13 @@ Checks that `terraform`, `databricks` (CLI), `az` and `python3` are installed. N
 │   ├── resources/option_c.yml     Custom Graph job
 │   └── notebooks/
 │       ├── 01_graph_delta_ingest.py            Option C: Graph delta + ACL capture
-│       ├── 02_parse_and_chunk.sql              Option B: parse + chunk
-│       ├── 02b_parse_and_chunk_from_volume.sql Option C: parse + chunk from Volume
-│       ├── 03_sync_vector_index.py             index sync + security-trimmed search
-│       └── 04_monitoring_queries.sql           alert queries
+│       ├── 02_parse_and_chunk.sql              Option B: incremental parse + chunk
+│       ├── 02b_parse_and_chunk_from_volume.sql Option C: incremental parse + chunk from Volume
+│       ├── 03_sync_vector_index.py             trigger the Vector Search sync
+│       ├── lib_secure_search.py                secure_search(): security-trimmed retrieval helpers
+│       ├── 04_monitoring_queries.sql           alert queries
+│       └── 99_e2e_smoke_test.py                asserting end-to-end test (see tests/)
+├── tests/                         synthetic corpus generator + how to run the smoke test
 └── scripts/
     ├── preflight.sh               tool check
     ├── get_site_id.sh             find a site's Graph ID
@@ -291,9 +294,10 @@ Run the first ingest manually from the pipeline page before enabling the schedul
 
 Notebook `02_parse_and_chunk.sql` (task `parse_chunk` in the job) parses binaries with `ai_parse_document` and writes `sharepoint_silver.parsed_docs` and `sharepoint_silver.chunks` (Change Data Feed enabled, required by Delta Sync indexes).
 
+It is **incremental**: only new or modified documents are parsed (and billed); chunks of modified or deleted documents are removed first so the index never serves stale text; and a document the parser rejects keeps a row in `parsed_docs` with `error_status` set and produces no chunks (the monitoring notebook reports them).
+
 - Validate the `_sharepoint_metadata` field names first (`site_id` is used as the security scope).
 - `ai_parse_document` accepts PDF, JPG/PNG, TIFF, DOC/DOCX and PPT/PPTX. Other files (for example plain text) need a different path.
-- Switch from full refresh to an incremental `MERGE` once volumes are large, so unchanged documents are not re-parsed and re-billed.
 
 Continue at [Step 7: serve the data](#7-serve-the-ingested-data).
 
@@ -363,7 +367,7 @@ Then `03_sync_vector_index.py` syncs it on every job run. The index is `TRIGGERE
 
 #### Security-trimmed retrieval
 
-`03_sync_vector_index.py` includes `secure_search()`:
+`03_sync_vector_index.py` triggers the sync; `lib_secure_search.py` provides `secure_search()` (use it from your agent/app notebook with `%run ./lib_secure_search`, after `%pip install databricks-vectorsearch` and a Python restart; `databricks-vectorsearch` is **not** preinstalled on serverless, and the bundle jobs declare it as an environment dependency):
 
 - **Site/library-level trimming:** map the caller's Entra groups to the sites they may read in a table you own (`m365.sharepoint_silver.site_access`: `group_name`, `site_id`), and pass those sites as a filter on `source_scope`. **Fail closed:** no mapping means no results.
 - **Document-level trimming (Path C only):** over-fetch, then drop any chunk whose `item_id` has no `file_acls` row for the caller's principals.
@@ -374,7 +378,7 @@ You own and must build the `site_access` mapping (for example refreshed nightly 
 
 ## 8. Validate before you roll out
 
-Run the **same question set** through Path A and Path B (or C) and let the numbers decide.
+Run the **same question set** through Path A and Path B (or C) and let the numbers decide. For the engineering half, `bundle/notebooks/99_e2e_smoke_test.py` asserts retrieval and security behaviour automatically (see [`tests/README.md`](tests/README.md)).
 
 | Step | Activity | Success criteria |
 |---|---|---|
@@ -485,6 +489,8 @@ When raising a Databricks support case, include the pipeline/update ID, the work
 | Delta `410 Gone` (Path C) | Expired delta token | Full re-enumeration (handled in notebook 01) |
 | Knowledge Assistant missing some files | Over 100 MB / 500 pages, or names starting with `_` or `.` | Rename or split; see the skipped-file report |
 | `terraform apply` fails creating the index | Chunks table does not exist yet | Keep `create_vector_index=false` until the parse job has run once |
+| `ModuleNotFoundError: databricks.vector_search` | `databricks-vectorsearch` is not preinstalled on serverless | Keep the job `environments` dependency from `bundle/resources/*.yml`, or `%pip install databricks-vectorsearch` and restart Python. An in-process `pip install` without a restart does not work |
+| A document is in `parsed_docs` but has no chunks | The parser rejected it (`error_status`) or every element was under 50 characters | Run the parse-failure queries in `04_monitoring_queries.sql`; fix or replace the file |
 | Join returns no rows in `02b` | `read_files` paths carry a `dbfs:` prefix or differ from `files.path` | Compare a few values and adjust the `regexp_replace` |
 
 For failed Lakeflow pipelines, open the failed step and then **Update details, Logs**. For OAuth errors, the Databricks SharePoint troubleshooting page provides a script that exchanges the refresh token and lists the site's drives via Microsoft Graph.
@@ -549,6 +555,26 @@ For failed Lakeflow pipelines, open the failed step and then **Update details, L
 
 ---
 
+## What has been tested
+
+A run on a live Databricks workspace (AWS, serverless compute, 6 October 2026) against a **synthetic** corpus (PDF and Word files in two simulated sites, one restricted):
+
+| Verified | Result |
+|---|---|
+| `terraform validate` against the real providers | Pass |
+| `databricks bundle validate` against a workspace | Pass |
+| `02_parse_and_chunk.sql` as a serverless job with job parameters | Pass: PDF and DOCX parsed, chunks created, Change Data Feed on |
+| Incremental behaviour | No-change rerun re-parsed nothing; a modified file was re-parsed and only its new text remained; a deleted file's chunks were removed; a corrupt file was recorded with its error and produced no chunks |
+| `02b_parse_and_chunk_from_volume.sql` against a simulated Graph `files` table | Pass, `item_id` populated |
+| Delta Sync index build, `secure_search()` | Pass: correct top document; restricted site never returned to an unmapped group; empty/unknown groups return nothing |
+| `04_monitoring_queries.sql` | All queries run |
+
+Bugs found and fixed by that run: `databricks-vectorsearch` not preinstalled on serverless; the parse notebook re-parsed (and re-billed) every document on every run, ignored parse errors and never removed stale chunks.
+
+**Not tested** (needs a Microsoft tenant): the SharePoint Unity Catalog connection, the Lakeflow Connect pipeline against real SharePoint, the Entra app and Terraform `apply`, `01_graph_delta_ingest.py` against the real Graph API, Path A, and Knowledge Assistant. Bronze inputs were simulated, so **validate the real connector's output schema** (`DESCRIBE TABLE`) before relying on the column names used in `02`.
+
+---
+
 ## Disclaimer
 
-The code is a reference implementation. The Terraform configuration passes `terraform validate` and the Python, shell and YAML files parse, but the notebooks have not been executed against a live tenant. Run everything in a dev workspace first, validate the items marked **Validate** against your own output, and review the security settings with your security team before production use.
+The code is a reference implementation. Run everything in a dev workspace first, validate the items marked **Validate** against your own output, and review the security settings with your security team before production use.
