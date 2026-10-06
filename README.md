@@ -575,6 +575,12 @@ Bugs found and fixed by that run: `databricks-vectorsearch` not preinstalled on 
 
 ---
 
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE).
+
+---
+
 ## Disclaimer
 
 The code is a reference implementation. Run everything in a dev workspace first, validate the items marked **Validate** against your own output, and review the security settings with your security team before production use.
