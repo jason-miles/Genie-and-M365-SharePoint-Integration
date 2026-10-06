@@ -1,0 +1,37 @@
+# Option C: custom Microsoft Graph delta pipeline -> parse/chunk from Volume -> Vector Search sync
+# Use ONE corpus pipeline per silver schema: Option B and Option C both write
+# <catalog>.sharepoint_silver.parsed_docs / chunks. Run them against different catalogs or schemas
+# if you need both at once.
+resources:
+  jobs:
+    sharepoint_rag_option_c:
+      name: sharepoint-rag-option-c-${bundle.target}
+      schedule:
+        quartz_cron_expression: "0 0 3 * * ?"
+        timezone_id: ${var.schedule_timezone}
+      email_notifications:
+        on_failure:
+          - ${var.ops_email}
+      parameters:
+        - name: catalog
+          default: ${var.catalog}
+        - name: site_id
+          default: ${var.graph_site_id}
+        - name: vs_endpoint
+          default: ${var.vs_endpoint}
+        - name: vs_index
+          default: ${var.vs_index}
+      tasks:
+        - task_key: graph_ingest
+          notebook_task:
+            notebook_path: ../notebooks/01_graph_delta_ingest.py
+        - task_key: parse_chunk
+          depends_on:
+            - task_key: graph_ingest
+          notebook_task:
+            notebook_path: ../notebooks/02b_parse_and_chunk_from_volume.sql
+        - task_key: sync_index
+          depends_on:
+            - task_key: parse_chunk
+          notebook_task:
+            notebook_path: ../notebooks/03_sync_vector_index.py

@@ -1,0 +1,17 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+.terraform.lock.hcl.bak
+
+# Databricks bundle
+.databricks/
+
+# Secrets and local files
+.env
+*.pem
+.DS_Store
+__pycache__/

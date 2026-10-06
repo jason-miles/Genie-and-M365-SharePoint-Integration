@@ -1,0 +1,48 @@
+# Databricks Asset Bundle: SharePoint ingestion pipeline (Option B), custom Graph job (Option C),
+# and the shared parse / index notebooks.
+#
+# Workspace auth comes from your CLI profile / environment:
+#   databricks bundle validate -t dev --profile <profile>
+#   databricks bundle deploy   -t dev --profile <profile>
+bundle:
+  name: sharepoint-rag
+
+include:
+  - resources/*.yml
+
+variables:
+  catalog:
+    description: Unity Catalog catalog created by terraform (catalog_name)
+    default: m365
+  sharepoint_connection_name:
+    description: Name of the SharePoint Unity Catalog connection created in Catalog Explorer
+    default: sharepoint_m2m
+  sharepoint_url:
+    description: "Site, subsite, drive or folder to ingest, e.g. https://<tenant>.sharepoint.com/sites/<site>"
+  destination_table:
+    description: Bronze table that receives the SharePoint files (Option B)
+    default: sharepoint_files
+  graph_site_id:
+    description: "Microsoft Graph site ID for the custom pipeline (Option C); see scripts/get_site_id.sh"
+    default: ""
+  ops_email:
+    description: On-call address for job failure notifications
+  schedule_timezone:
+    description: Quartz timezone id for the nightly schedule
+    default: UTC
+  vs_endpoint:
+    description: Vector Search endpoint name (terraform output vector_search_endpoint)
+    default: vs-sharepoint-dev
+  vs_index:
+    description: Fully qualified Vector Search index name
+    default: m365.sharepoint_silver.chunks_index
+
+targets:
+  dev:
+    mode: development
+    default: true
+  prod:
+    mode: production
+    # Run prod as a service principal, never as a person:
+    # run_as:
+    #   service_principal_name: "<application-id>"

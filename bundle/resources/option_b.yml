@@ -1,0 +1,61 @@
+# Option B: Lakeflow Connect SharePoint ingestion -> parse/chunk -> Vector Search sync
+resources:
+  pipelines:
+    sharepoint_ingest:
+      name: sharepoint-ingest-${bundle.target}
+      serverless: true
+      catalog: ${var.catalog}
+      schema: sharepoint_bronze
+      ingestion_definition:
+        connection_name: ${var.sharepoint_connection_name}
+        objects:
+          - table:
+              destination_catalog: ${var.catalog}
+              destination_schema: sharepoint_bronze
+              destination_table: ${var.destination_table}
+              connector_options:
+                sharepoint_options:
+                  entity_type: FILE
+                  url: ${var.sharepoint_url}
+                  file_ingestion_options:
+                    format: BINARYFILE
+                    schema_evolution_mode: NONE
+                    # Each filter object takes ONE key. Uncomment and adapt to scope the ingest:
+                    # file_filters:
+                    #   - path_filter: "Shared Documents/Policies/*"
+                    #   - modified_after: "2024-01-01T00:00:00"
+
+  jobs:
+    sharepoint_rag_option_b:
+      name: sharepoint-rag-option-b-${bundle.target}
+      schedule:
+        quartz_cron_expression: "0 0 2 * * ?"
+        timezone_id: ${var.schedule_timezone}
+      email_notifications:
+        on_failure:
+          - ${var.ops_email}
+      parameters:
+        - name: catalog
+          default: ${var.catalog}
+        - name: bronze_table
+          default: ${var.destination_table}
+        - name: vs_endpoint
+          default: ${var.vs_endpoint}
+        - name: vs_index
+          default: ${var.vs_index}
+      tasks:
+        - task_key: ingest
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.sharepoint_ingest.id}
+        - task_key: parse_chunk
+          depends_on:
+            - task_key: ingest
+          notebook_task:
+            notebook_path: ../notebooks/02_parse_and_chunk.sql
+        # Remove this task if you use Knowledge Assistant only. The notebook also exits cleanly
+        # if the index does not exist yet.
+        - task_key: sync_index
+          depends_on:
+            - task_key: parse_chunk
+          notebook_task:
+            notebook_path: ../notebooks/03_sync_vector_index.py
