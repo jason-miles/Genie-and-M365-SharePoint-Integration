@@ -303,12 +303,18 @@ In Catalog Explorer: **Create connection** → type **Microsoft SharePoint** →
 
 ### Step 5 · Configure and deploy the ingestion pipeline
 
+`bundle deploy` creates **every** resource listed under `include:` in `bundle/databricks.yml`. For Path B only, comment out the `resources/option_c.yml` line first (the Path C job needs a Graph site ID and would fail nightly).
+
 ```bash
 cd bundle
 VARS=(--var sharepoint_url="https://<tenant>.sharepoint.com/sites/<site>" --var ops_email="oncall@example.com")
 databricks bundle validate -t dev --profile <profile> "${VARS[@]}"
 databricks bundle deploy   -t dev --profile <profile> "${VARS[@]}"
+databricks bundle run sharepoint_rag_option_b -t dev --profile <profile>     # first run, manually
 ```
+
+> [!NOTE]
+> In `dev` mode the bundle prefixes resource names with `[dev <you>]` and pauses schedules. Use `databricks bundle run <key>` rather than looking jobs up by name.
 
 What the pipeline is (`bundle/resources/option_b.yml`):
 
@@ -378,17 +384,25 @@ Use this **only** when Path B cannot meet a requirement: per-document ACL captur
 
 ### Steps
 
-```bash
-./scripts/get_site_id.sh <tenant>.sharepoint.com /sites/<SiteName>      # 1. find the site ID
-
-cd bundle                                                               # 2. deploy with the site ID
-databricks bundle deploy -t dev --profile <profile> \
-  --var graph_site_id="<site-id>" --var ops_email="oncall@example.com" \
-  --var sharepoint_url="unused-for-path-c"
-```
-
-3. Run job `sharepoint-rag-option-c-dev` once. It runs `01_graph_delta_ingest.py` → `02b_parse_and_chunk_from_volume.sql` → `03_sync_vector_index.py`.
+1. Find the site ID:
+   ```bash
+   ./scripts/get_site_id.sh <tenant>.sharepoint.com /sites/<SiteName>
+   ```
+2. For Path C only, comment out the `resources/option_b.yml` line in `bundle/databricks.yml` (it needs a SharePoint connection you will not have), then deploy:
+   ```bash
+   cd bundle
+   databricks bundle deploy -t dev --profile <profile> \
+     --var graph_site_id="<site-id>" --var ops_email="oncall@example.com"
+   ```
+3. **First load:** run with ACL capture off, which is much faster, then once more with it on:
+   ```bash
+   databricks bundle run sharepoint_rag_option_c -t dev --profile <profile> --params capture_acls=false
+   ```
+   The job runs `01_graph_delta_ingest.py` → `02b_parse_and_chunk_from_volume.sql` → `03_sync_vector_index.py`.
 4. Tables created in `m365.sharepoint_bronze`: `files` (one row per item), `file_acls` (principals per item), `delta_state` (saved `deltaLink` per drive).
+
+> [!WARNING]
+> **Plan the first load for a large library.** The notebook downloads files one at a time, and ACL capture is one extra Graph call per changed item, so a first load of tens of thousands of files can take many hours and will meet throttling (HTTP 429, handled with `Retry-After`). Run it off-peak, use `capture_acls=false` first, and only add parallelism cautiously, since Graph throttles per app across your whole tenant. Later runs are incremental and small.
 
 > [!NOTE]
 > Paths B and C both write `sharepoint_silver.parsed_docs` and `chunks`. Run one corpus pipeline per silver schema, or point them at different catalogs/schemas.

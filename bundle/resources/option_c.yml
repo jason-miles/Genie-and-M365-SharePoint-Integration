@@ -1,5 +1,5 @@
-# Option C: custom Microsoft Graph delta pipeline -> parse/chunk from Volume -> Vector Search sync
-# Use ONE corpus pipeline per silver schema: Option B and Option C both write
+# Path C: custom Microsoft Graph delta pipeline -> parse/chunk from Volume -> Vector Search sync
+# Use ONE corpus pipeline per silver schema: Path B and Path C both write
 # <catalog>.sharepoint_silver.parsed_docs / chunks. Run them against different catalogs or schemas
 # if you need both at once.
 resources:
@@ -17,6 +17,8 @@ resources:
           default: ${var.catalog}
         - name: site_id
           default: ${var.graph_site_id}
+        - name: capture_acls
+          default: "true"
         - name: vs_endpoint
           default: ${var.vs_endpoint}
         - name: vs_index

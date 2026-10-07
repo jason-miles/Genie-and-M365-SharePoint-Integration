@@ -1,4 +1,4 @@
-# Option B: Lakeflow Connect SharePoint ingestion -> parse/chunk -> Vector Search sync
+# Path B: Lakeflow Connect SharePoint ingestion -> parse/chunk -> Vector Search sync
 resources:
   pipelines:
     sharepoint_ingest:

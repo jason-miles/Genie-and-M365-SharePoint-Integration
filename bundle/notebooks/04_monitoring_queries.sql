@@ -35,7 +35,7 @@ GROUP BY ALL ORDER BY usage_date DESC;
 
 -- COMMAND ----------
 
--- Freshness SLA (Option B): newest SharePoint modification landed in bronze. Alert if older than ~26 h.
+-- Freshness SLA (Path B): newest SharePoint modification landed in bronze. Alert if older than ~26 h.
 SELECT max(modificationTime) AS newest_file, current_timestamp() AS now,
        timestampdiff(HOUR, max(modificationTime), current_timestamp()) AS hours_behind
 FROM IDENTIFIER(:catalog || '.sharepoint_bronze.' || :bronze_table);

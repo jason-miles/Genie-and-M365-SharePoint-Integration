@@ -1,7 +1,7 @@
 -- Databricks notebook source
 -- MAGIC %md
--- MAGIC # Option C: incremental parse and chunk of files landed in the UC Volume by the Graph pipeline
--- MAGIC Same design and output schema as `02_parse_and_chunk.sql` (Option B), so the index and search code are identical.
+-- MAGIC # Path C: incremental parse and chunk of files landed in the UC Volume by the Graph pipeline
+-- MAGIC Same design and output schema as `02_parse_and_chunk.sql` (Path B), so the index and search code are identical.
 -- MAGIC The difference: files come from the Volume, joined to `sharepoint_bronze.files` so every chunk keeps its `item_id`
 -- MAGIC (needed for per-document ACL filtering) and `site_id`. `doc_id` is the stable Graph `item_id`, so a rename does not re-parse.
 -- MAGIC
@@ -91,7 +91,7 @@ INSERT INTO IDENTIFIER(:catalog || '.sharepoint_silver.chunks')
 SELECT
   concat(d.doc_id, '_', e.pos),
   d.doc_id,
-  d.doc_id,                      -- item_id = doc_id for Option C (used by per-document ACL filtering)
+  d.doc_id,                      -- item_id = doc_id for Path C (used by per-document ACL filtering)
   d.path,
   d.source_scope,
   e.value:content::STRING

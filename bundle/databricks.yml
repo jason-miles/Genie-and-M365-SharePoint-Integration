@@ -1,4 +1,4 @@
-# Databricks Asset Bundle: SharePoint ingestion pipeline (Option B), custom Graph job (Option C),
+# Databricks Asset Bundle: SharePoint ingestion pipeline (Path B), custom Graph job (Path C),
 # and the shared parse / index notebooks.
 #
 # Workspace auth comes from your CLI profile / environment:
@@ -7,8 +7,12 @@
 bundle:
   name: sharepoint-rag
 
+# Deploy ONLY the path(s) you use: `bundle deploy` creates every included resource.
+#   Path B needs the SharePoint Unity Catalog connection to exist first (README, Path B step 4).
+#   Path C needs graph_site_id set. Comment out the line you do not need.
 include:
-  - resources/*.yml
+  - resources/option_b.yml   # Path B: Lakeflow Connect pipeline + job
+  - resources/option_c.yml   # Path C: custom Graph job
 
 variables:
   catalog:
@@ -18,12 +22,13 @@ variables:
     description: Name of the SharePoint Unity Catalog connection created in Catalog Explorer
     default: sharepoint_m2m
   sharepoint_url:
-    description: "Site, subsite, drive or folder to ingest, e.g. https://<tenant>.sharepoint.com/sites/<site>"
+    description: "Path B: site, subsite, drive or folder to ingest, e.g. https://<tenant>.sharepoint.com/sites/<site>"
+    default: "https://CHANGE-ME.sharepoint.com/sites/CHANGE-ME"
   destination_table:
-    description: Bronze table that receives the SharePoint files (Option B)
+    description: Bronze table that receives the SharePoint files (Path B)
     default: sharepoint_files
   graph_site_id:
-    description: "Microsoft Graph site ID for the custom pipeline (Option C); see scripts/get_site_id.sh"
+    description: "Microsoft Graph site ID for the custom pipeline (Path C); see scripts/get_site_id.sh"
     default: ""
   ops_email:
     description: On-call address for job failure notifications

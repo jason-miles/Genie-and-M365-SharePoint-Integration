@@ -1,6 +1,6 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Option C: Microsoft Graph delta ingestion with ACL capture
+# MAGIC # Path C: Microsoft Graph delta ingestion with ACL capture
 # MAGIC Full enumeration on the first run, then only creates / changes / deletes via the saved `deltaLink`,
 # MAGIC per document library (drive). Files land in a UC Volume; metadata and ACLs land in Delta tables.
 # MAGIC Prerequisite: the Entra app has `Sites.Selected` and has been granted read on the site
@@ -13,8 +13,10 @@ from datetime import datetime, timezone
 
 dbutils.widgets.text("catalog", "m365")
 dbutils.widgets.text("site_id", "")
+dbutils.widgets.text("capture_acls", "true")   # set "false" for a fast first load, then run once with "true"
 CATALOG = dbutils.widgets.get("catalog")
 SITE_ID = dbutils.widgets.get("site_id")
+CAPTURE_ACLS = dbutils.widgets.get("capture_acls").lower() == "true"
 assert SITE_ID, "Set the site_id parameter (see scripts/get_site_id.sh)"
 
 GRAPH = "https://graph.microsoft.com/v1.0"
@@ -115,7 +117,8 @@ for d in drives:
                           "path": dest, "web_url": it.get("webUrl"), "size": it.get("size"),
                           "modified": it.get("lastModifiedDateTime"), "is_deleted": False})
 
-        perms = graph_get(f"{GRAPH}/drives/{drive_id}/items/{it['id']}/permissions").json()
+        perms = (graph_get(f"{GRAPH}/drives/{drive_id}/items/{it['id']}/permissions").json()
+                 if CAPTURE_ACLS else {})       # one Graph call per changed item: the slow part of a first load
         for p in perms.get("value", []):
             for ident in p.get("grantedToIdentitiesV2") or [p.get("grantedToV2") or {}]:
                 who = ident.get("group") or ident.get("siteGroup") or ident.get("user") or {}

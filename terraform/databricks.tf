@@ -44,7 +44,7 @@ resource "databricks_schema" "silver" {
   name         = "sharepoint_silver"
 }
 
-# Landing area for files downloaded by the custom Graph pipeline (Option C)
+# Landing area for files downloaded by the custom Graph pipeline (Path C)
 resource "databricks_volume" "raw" {
   catalog_name = databricks_catalog.m365.name
   schema_name  = databricks_schema.bronze.name

@@ -1,4 +1,4 @@
-# Entra ID app for Options B (Lakeflow Connect, OAuth M2M) and C (custom Graph pipeline).
+# Entra ID app for Paths B (Lakeflow Connect, OAuth M2M) and C (custom Graph pipeline).
 # Least privilege: Sites.Selected. Per-site access is granted separately by scripts/grant_site_access.sh,
 # run by an ADMIN identity. The app cannot grant itself access to any site.
 

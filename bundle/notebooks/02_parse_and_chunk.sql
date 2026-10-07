@@ -1,6 +1,6 @@
 -- Databricks notebook source
 -- MAGIC %md
--- MAGIC # Option B: incremental parse and chunk of the Lakeflow Connect bronze table
+-- MAGIC # Path B: incremental parse and chunk of the Lakeflow Connect bronze table
 -- MAGIC Parameters (job parameters): `catalog`, `bronze_table`.
 -- MAGIC
 -- MAGIC Only **new or modified** documents are parsed (and billed). Chunks for modified or deleted documents are removed first,
@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS IDENTIFIER(:catalog || '.sharepoint_silver.parsed_doc
 
 -- COMMAND ----------
 
--- item_id is NULL for Option B (no per-item Graph ID); the column keeps the schema identical to Option C.
+-- item_id is NULL for Path B (no per-item Graph ID); the column keeps the schema identical to Path C.
 CREATE TABLE IF NOT EXISTS IDENTIFIER(:catalog || '.sharepoint_silver.chunks') (
   chunk_id     STRING,
   doc_id       STRING,

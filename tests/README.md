@@ -17,7 +17,7 @@ q "CREATE SCHEMA IF NOT EXISTS $C.sharepoint_bronze"; q "CREATE SCHEMA IF NOT EX
 q "CREATE VOLUME IF NOT EXISTS $C.sharepoint_bronze.raw_files"
 databricks fs cp -r /tmp/corpus dbfs:/Volumes/$C/sharepoint_bronze/raw_files --profile $P
 
-# 2. Simulated Option B bronze table (shape of the Lakeflow Connect output; VALIDATE against real output with DESCRIBE TABLE)
+# 2. Simulated Path B bronze table (shape of the Lakeflow Connect output; VALIDATE against real output with DESCRIBE TABLE)
 q "CREATE OR REPLACE TABLE $C.sharepoint_bronze.sharepoint_files AS
    SELECT path, modificationTime, length, content,
           named_struct('site_id', regexp_extract(path,'(SITE_[A-Z]+)',1), 'drive_id','simulated') AS _sharepoint_metadata
@@ -36,7 +36,7 @@ q "CREATE OR REPLACE TABLE $C.sharepoint_bronze.sharepoint_files AS
 | No change | Run `02` again | Zero documents re-parsed (`parsed_at` unchanged) |
 | Change | `make_synthetic_corpus.py --revised`, re-copy, rebuild the bronze table, run `02` | Modified file re-parsed and only its new text is indexed; deleted file's chunks removed; corrupt file recorded in `parsed_docs.error_status` with no chunks; untouched files not re-parsed |
 | Security | `99_e2e_smoke_test` | Restricted site never returned to an unmapped group; unknown or empty groups return nothing |
-| Option C | Build a `sharepoint_bronze.files` table from the Volume listing and run `02b` | Same results, with `item_id` populated on every chunk |
+| Path C | Build a `sharepoint_bronze.files` table from the Volume listing and run `02b` | Same results, with `item_id` populated on every chunk |
 
 ## Clean up
 

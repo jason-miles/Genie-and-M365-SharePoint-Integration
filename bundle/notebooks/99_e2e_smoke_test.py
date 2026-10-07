@@ -1,6 +1,6 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # End-to-end smoke test (downstream half of Options B / C)
+# MAGIC # End-to-end smoke test (downstream half of Paths B / C)
 # MAGIC Run after `02_parse_and_chunk` has produced chunks and the Vector Search index is online.
 # MAGIC It creates a small `site_access` mapping, syncs the index and **asserts** the security behaviour:
 # MAGIC relevant retrieval, site-level trimming, fail-closed on no groups, and that unparseable files never reach the index.
