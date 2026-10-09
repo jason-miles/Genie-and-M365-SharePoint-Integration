@@ -5,10 +5,12 @@
 -- MAGIC The difference: files come from the Volume, joined to `sharepoint_bronze.files` so every chunk keeps its `item_id`
 -- MAGIC (needed for per-document ACL filtering) and `site_id`. `doc_id` is the stable Graph `item_id`, so a rename does not re-parse.
 -- MAGIC
--- MAGIC Only new or modified documents are parsed (and billed). Parameter: `catalog`.
+-- MAGIC Only new or modified documents are parsed (and billed). Over-limit (100 MB) documents get a `TOO_LARGE` row so they are visible.
+-- MAGIC **Safety guard:** nothing is deleted if `files` is empty. Parameter: `catalog`.
 -- MAGIC
--- MAGIC **Validate first:** the `path` returned by `read_files` may carry a `dbfs:` prefix (stripped below). If the join returns no rows,
--- MAGIC compare a few values with `files.path`. If `read_files` rejects the concatenated Volume path, hard-code it for your catalog.
+-- MAGIC **Validate first:** the `path` returned by `read_files` may carry a `dbfs:` prefix (stripped below) and may be URL-encoded for names with
+-- MAGIC spaces or special characters. If the join returns fewer rows than `files`, compare a few values; the monitoring notebook has a query for
+-- MAGIC `files` rows that never reached `parsed_docs`. If `read_files` rejects the concatenated Volume path, hard-code it for your catalog.
 -- MAGIC Known optimisation: `read_files` lists the whole Volume each run; parsing is still limited to new/changed documents.
 
 -- COMMAND ----------
@@ -40,26 +42,28 @@ CREATE TABLE IF NOT EXISTS IDENTIFIER(:catalog || '.sharepoint_silver.chunks') (
 
 -- COMMAND ----------
 
--- 1. Remove chunks of documents that were modified or deleted in SharePoint
+-- 1. Remove chunks of documents that were modified or deleted in SharePoint (never when the source is empty)
 DELETE FROM IDENTIFIER(:catalog || '.sharepoint_silver.chunks')
-WHERE doc_id IN (
-  SELECT p.doc_id
-  FROM IDENTIFIER(:catalog || '.sharepoint_silver.parsed_docs') p
-  WHERE NOT EXISTS (
-    SELECT 1 FROM IDENTIFIER(:catalog || '.sharepoint_bronze.files') f
-    WHERE f.item_id = p.doc_id AND NOT f.is_deleted AND CAST(f.modified AS TIMESTAMP) = p.modification_time));
+WHERE EXISTS (SELECT 1 FROM IDENTIFIER(:catalog || '.sharepoint_bronze.files') WHERE NOT is_deleted)
+  AND doc_id IN (
+    SELECT p.doc_id
+    FROM IDENTIFIER(:catalog || '.sharepoint_silver.parsed_docs') p
+    WHERE NOT EXISTS (
+      SELECT 1 FROM IDENTIFIER(:catalog || '.sharepoint_bronze.files') f
+      WHERE f.item_id = p.doc_id AND NOT f.is_deleted AND CAST(f.modified AS TIMESTAMP) <=> p.modification_time));
 
 -- COMMAND ----------
 
 -- 2. Remove their parsed rows
 DELETE FROM IDENTIFIER(:catalog || '.sharepoint_silver.parsed_docs') p
-WHERE NOT EXISTS (
-  SELECT 1 FROM IDENTIFIER(:catalog || '.sharepoint_bronze.files') f
-  WHERE f.item_id = p.doc_id AND NOT f.is_deleted AND CAST(f.modified AS TIMESTAMP) = p.modification_time);
+WHERE EXISTS (SELECT 1 FROM IDENTIFIER(:catalog || '.sharepoint_bronze.files') WHERE NOT is_deleted)
+  AND NOT EXISTS (
+    SELECT 1 FROM IDENTIFIER(:catalog || '.sharepoint_bronze.files') f
+    WHERE f.item_id = p.doc_id AND NOT f.is_deleted AND CAST(f.modified AS TIMESTAMP) <=> p.modification_time);
 
 -- COMMAND ----------
 
--- 3. Parse only documents not parsed yet. Parser limit: 100 MB / 500 pages.
+-- 3a. Parse documents not parsed yet. Parser limit: 100 MB / 500 pages.
 INSERT INTO IDENTIFIER(:catalog || '.sharepoint_silver.parsed_docs')
 SELECT
   item_id,
@@ -79,10 +83,22 @@ FROM (
                     format => 'binaryFile', recursiveFileLookup => true)
   ) r ON r.path = f.path
   WHERE NOT f.is_deleted
-    AND r.length < 100 * 1024 * 1024
+    AND r.length <= 100 * 1024 * 1024
     AND NOT EXISTS (
       SELECT 1 FROM IDENTIFIER(:catalog || '.sharepoint_silver.parsed_docs') p WHERE p.doc_id = f.item_id)
 );
+
+-- COMMAND ----------
+
+-- 3b. Record documents over the parser limit so they are visible to monitoring
+INSERT INTO IDENTIFIER(:catalog || '.sharepoint_silver.parsed_docs')
+SELECT f.item_id, f.path, CAST(f.modified AS TIMESTAMP), f.site_id, CAST(NULL AS VARIANT),
+       'TOO_LARGE: over the 100 MB parser limit', current_timestamp()
+FROM IDENTIFIER(:catalog || '.sharepoint_bronze.files') f
+WHERE NOT f.is_deleted
+  AND f.size > 100 * 1024 * 1024
+  AND NOT EXISTS (
+    SELECT 1 FROM IDENTIFIER(:catalog || '.sharepoint_silver.parsed_docs') p WHERE p.doc_id = f.item_id);
 
 -- COMMAND ----------
 

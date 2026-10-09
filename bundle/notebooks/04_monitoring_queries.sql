@@ -70,3 +70,11 @@ WHERE d.error_status IS NULL;
 SELECT source_scope, count(DISTINCT doc_id) AS documents, count(*) AS chunks
 FROM IDENTIFIER(:catalog || '.sharepoint_silver.chunks')
 GROUP BY source_scope ORDER BY source_scope;
+
+-- COMMAND ----------
+
+-- Path C: files recorded by the Graph pipeline that never reached parsed_docs (for example a path-matching problem in 02b)
+SELECT f.item_id, f.path
+FROM IDENTIFIER(:catalog || '.sharepoint_bronze.files') f
+LEFT ANTI JOIN IDENTIFIER(:catalog || '.sharepoint_silver.parsed_docs') p ON p.doc_id = f.item_id
+WHERE NOT f.is_deleted;

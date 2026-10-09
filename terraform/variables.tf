@@ -26,10 +26,20 @@ variable "engineer_group" {
   default     = "grp-rag-engineers"
 }
 
-variable "consumer_group" {
-  description = "Databricks group that may read the curated (silver) tables"
+variable "agent_principal" {
+  description = <<-EOT
+    Service principal (application ID) or group that runs your agent / app and may read the silver tables and query the index.
+    End users must NOT get SELECT on the silver tables or query access on the index: secure_search() only protects callers who go through it.
+    Leave empty to grant nothing.
+  EOT
   type        = string
-  default     = "grp-rag-consumers"
+  default     = ""
+}
+
+variable "secret_reader" {
+  description = "Principal allowed to READ the Entra client secret in the secret scope. Defaults to engineer_group; in production set it to the run-as service principal only (anyone with READ can print the secret from a notebook)."
+  type        = string
+  default     = null
 }
 
 variable "secret_lifetime_hours" {

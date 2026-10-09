@@ -38,9 +38,6 @@ variables:
   vs_endpoint:
     description: Vector Search endpoint name (terraform output vector_search_endpoint)
     default: vs-sharepoint-dev
-  vs_index:
-    description: Fully qualified Vector Search index name
-    default: m365.sharepoint_silver.chunks_index
 
 targets:
   dev:

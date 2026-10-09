@@ -5,7 +5,8 @@ env             = "dev"
 
 # catalog_name   = "m365"
 # engineer_group = "grp-rag-engineers"
-# consumer_group = "grp-rag-consumers"
+# agent_principal = "<service-principal-application-id>"   # the identity that runs your agent / app
+# secret_reader   = "<run-as-service-principal>"            # prod: only the job identity should read the client secret
 
 # First apply: leave false. After the first parse job run, set true and apply again.
 create_vector_index = false

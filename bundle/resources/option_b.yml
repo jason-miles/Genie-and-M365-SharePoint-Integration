@@ -42,7 +42,7 @@ resources:
         - name: vs_endpoint
           default: ${var.vs_endpoint}
         - name: vs_index
-          default: ${var.vs_index}
+          default: ${var.catalog}.sharepoint_silver.chunks_index
       environments:
         - environment_key: default
           spec:

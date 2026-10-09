@@ -20,6 +20,9 @@ dbutils.widgets.text("catalog", "m365")
 dbutils.widgets.text("vs_endpoint", "vs-sharepoint-dev")
 dbutils.widgets.text("vs_index", "m365.sharepoint_silver.chunks_index")
 _params = {k: dbutils.widgets.get(k) for k in ("catalog", "vs_endpoint", "vs_index")}
+# Use a scratch mapping table so the test can never overwrite a real site_access table
+_params["site_access_table"] = f"{_params['catalog']}.sharepoint_silver.site_access_smoketest"
+dbutils.widgets.text("site_access_table", _params["site_access_table"])   # read by lib_secure_search
 
 # COMMAND ----------
 
@@ -34,16 +37,16 @@ print(dbutils.notebook.run("./03_sync_vector_index", 900, _params))
 # wait until the sync has landed (index row count matches the chunk table)
 expected = spark.sql(f"SELECT count(*) c FROM {CATALOG}.sharepoint_silver.chunks").first().c
 for _ in range(60):
-    st = idx.describe().get("status", {})
+    st = get_idx().describe().get("status", {})
     if st.get("ready") and st.get("indexed_row_count") == expected:
         break
     time.sleep(10)
-assert idx.describe().get("status", {}).get("indexed_row_count") == expected, \
-    f"index has not caught up to {expected} chunks: {idx.describe().get('status')}"
+assert get_idx().describe().get("status", {}).get("indexed_row_count") == expected, \
+    f"index has not caught up to {expected} chunks: {get_idx().describe().get('status')}"
 
 # COMMAND ----------
 
-spark.sql(f"""CREATE OR REPLACE TABLE {CATALOG}.sharepoint_silver.site_access AS
+spark.sql(f"""CREATE OR REPLACE TABLE {SITE_ACCESS_TABLE} AS
   SELECT * FROM VALUES ('grp-claims','SITE_POLICIES'), ('grp-hr','SITE_POLICIES'), ('grp-hr','SITE_HR')
   AS t(group_name, site_id)""")
 
@@ -68,7 +71,20 @@ assert any("salary_bands" in r[2] for r in rows), "authorised user cannot find r
 assert secure_search("anything", []) == []
 assert secure_search("anything", ["grp-unknown"]) == []
 
-# 5. Documents that failed to parse never reach the index
+# 5. Group names cannot inject SQL: hostile values must not widen access
+for hostile in ["x\\' OR 1=1 --", "x') OR ('1'='1", "grp-claims' OR group_name LIKE '%", "%", "grp-hr\\"]:
+    assert allowed_sites_for([hostile]) == [], f"hostile group matched: {hostile!r}"
+    assert secure_search("salary", [hostile]) == [], f"hostile group returned results: {hostile!r}"
+
+# 6. Document-level ACL mode cannot silently turn off
+try:
+    secure_search("anything", ["grp-hr"], document_acls=True)          # principal_ids missing
+    raise AssertionError("document_acls=True accepted principal_ids=None")
+except ValueError:
+    pass
+assert secure_search("anything", ["grp-hr"], principal_ids=[], document_acls=True) == []
+
+# 7. Documents that failed to parse never reach the index
 bad = spark.sql(f"SELECT count(*) c FROM {CATALOG}.sharepoint_silver.chunks WHERE path LIKE '%corrupt%'").first().c
 assert bad == 0, "chunks exist for a document that failed to parse"
 

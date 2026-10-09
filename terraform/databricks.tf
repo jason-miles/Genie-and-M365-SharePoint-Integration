@@ -26,7 +26,7 @@ resource "databricks_secret" "client_secret" {
 
 resource "databricks_secret_acl" "m365_readers" {
   scope      = databricks_secret_scope.m365.name
-  principal  = var.engineer_group
+  principal  = coalesce(var.secret_reader, var.engineer_group)
   permission = "READ"
 }
 
@@ -60,9 +60,12 @@ resource "databricks_grants" "catalog" {
     principal  = var.engineer_group
     privileges = ["USE_CATALOG"]
   }
-  grant {
-    principal  = var.consumer_group
-    privileges = ["USE_CATALOG"]
+  dynamic "grant" {
+    for_each = var.agent_principal == "" ? [] : [var.agent_principal]
+    content {
+      principal  = grant.value
+      privileges = ["USE_CATALOG"]
+    }
   }
 }
 
@@ -82,8 +85,12 @@ resource "databricks_grants" "silver" {
     principal  = var.engineer_group
     privileges = ["USE_SCHEMA", "SELECT", "MODIFY", "CREATE_TABLE"]
   }
-  grant {
-    principal  = var.consumer_group
-    privileges = ["USE_SCHEMA", "SELECT"]
+  # End users get nothing here. Only the principal that runs the agent reads the silver tables.
+  dynamic "grant" {
+    for_each = var.agent_principal == "" ? [] : [var.agent_principal]
+    content {
+      principal  = grant.value
+      privileges = ["USE_SCHEMA", "SELECT"]
+    }
   }
 }

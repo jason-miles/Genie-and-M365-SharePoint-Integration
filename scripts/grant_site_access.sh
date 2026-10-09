@@ -10,6 +10,7 @@ set -euo pipefail
 SITE_ID="${1:?usage: grant_site_access.sh <site-id> <client-id> [display-name]}"
 CLIENT_ID="${2:?usage: grant_site_access.sh <site-id> <client-id> [display-name]}"
 NAME="${3:-Databricks SharePoint Ingestion}"
+case "$NAME" in *\"*|*\\*) echo "display name must not contain quotes or backslashes" >&2; exit 1;; esac
 
 BODY=$(cat <<EOF
 {"roles":["read"],"grantedToIdentities":[{"application":{"id":"${CLIENT_ID}","displayName":"${NAME}"}}]}

@@ -9,6 +9,9 @@ check terraform version  "https://developer.hashicorp.com/terraform/install  (ne
 check databricks --version "https://docs.databricks.com/dev-tools/cli/install  (needed to deploy the bundle)"
 check az --version       "https://learn.microsoft.com/cli/azure/install-azure-cli  (needed for Graph site grants)"
 check python3 --version  "any 3.10+"
+python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" 2>/dev/null || { echo "  WARN    python3 is older than 3.10"; ok=1; }
+
+if command -v az >/dev/null 2>&1 && ! az account show >/dev/null 2>&1; then echo "  NOTE    az is installed but not logged in: run az login before the Entra / site-grant steps"; fi
 
 echo
 echo "Next: confirm your workspace region supports Unity Gateway, ai_parse_document, Knowledge Assistant and"
