@@ -268,12 +268,20 @@ This repo implements **M2M with `Sites.Selected`** (least privilege).
 
 ```bash
 cd terraform
-cp terraform.tfvars.example terraform.tfvars    # set databricks_host and tenant_id
+cp terraform.tfvars.example terraform.tfvars    # set databricks_host, tenant_id, agent_principal, secret_reader
 az login                                        # identity able to create Entra apps + consent
 terraform init && terraform plan && terraform apply
+cd ..                                           # every code block in this README starts from the repo root
 ```
 
 Creates: the Entra app with the `Sites.Selected` **application** permission and admin consent · a client secret (180-day lifetime) stored **only** in the Databricks secret scope `m365-sharepoint` · the `m365` catalog, `sharepoint_bronze` / `sharepoint_silver` schemas, a managed `raw_files` Volume and grants (including `USE_CATALOG`) · a Vector Search endpoint.
+
+Two variables control who can read what:
+
+| Variable | Set it to | Why |
+|---|---|---|
+| `agent_principal` | The service principal (or group) that runs your agent or app | Only this identity gets `SELECT` on the silver tables and query access on the index. **End users get neither**: `secure_search()` only protects callers who go through it |
+| `secret_reader` | The run-as service principal of the ingestion job (in production) | Anyone with `READ` on the secret scope can print the client secret from a notebook. Defaults to `engineer_group` for dev |
 
 > [!CAUTION]
 > Secret values pass through Terraform state. Use an encrypted remote backend with tight access, or create the secret out of band.
@@ -306,11 +314,13 @@ In Catalog Explorer: **Create connection** → type **Microsoft SharePoint** →
 `bundle deploy` creates **every** resource listed under `include:` in `bundle/databricks.yml`. For Path B only, comment out the `resources/option_c.yml` line first (the Path C job needs a Graph site ID and would fail nightly).
 
 ```bash
+export BUNDLE_VAR_ops_email="oncall@example.com"   # required variable; bundle run needs it too
 cd bundle
-VARS=(--var sharepoint_url="https://<tenant>.sharepoint.com/sites/<site>" --var ops_email="oncall@example.com")
+VARS=(--var sharepoint_url="https://<tenant>.sharepoint.com/sites/<site>")
 databricks bundle validate -t dev --profile <profile> "${VARS[@]}"
 databricks bundle deploy   -t dev --profile <profile> "${VARS[@]}"
-databricks bundle run sharepoint_rag_option_b -t dev --profile <profile>     # first run, manually
+databricks bundle run sharepoint_rag_option_b -t dev --profile <profile> "${VARS[@]}"   # first run, manually
+cd ..
 ```
 
 > [!NOTE]
@@ -390,19 +400,25 @@ Use this **only** when Path B cannot meet a requirement: per-document ACL captur
    ```
 2. For Path C only, comment out the `resources/option_b.yml` line in `bundle/databricks.yml` (it needs a SharePoint connection you will not have), then deploy:
    ```bash
+   export BUNDLE_VAR_ops_email="oncall@example.com"
    cd bundle
-   databricks bundle deploy -t dev --profile <profile> \
-     --var graph_site_id="<site-id>" --var ops_email="oncall@example.com"
+   databricks bundle deploy -t dev --profile <profile> --var graph_site_id="<site-id>"
+   cd ..
    ```
-3. **First load:** run with ACL capture off, which is much faster, then once more with it on:
+3. **First load:** ingest with ACL capture off, which is much faster, then run once with `acl_backfill=true` to fetch ACLs for every file already ingested. (Running again with `capture_acls=true` would **not** do this: it only captures ACLs for items that changed, so `file_acls` would stay empty.)
    ```bash
-   databricks bundle run sharepoint_rag_option_c -t dev --profile <profile> --params capture_acls=false
+   cd bundle
+   databricks bundle run sharepoint_rag_option_c -t dev --profile <profile> --var graph_site_id="<site-id>" --params capture_acls=false
+   databricks bundle run sharepoint_rag_option_c -t dev --profile <profile> --var graph_site_id="<site-id>" --params acl_backfill=true
+   cd ..
    ```
+   Later scheduled runs capture ACLs for changed items. **Permission changes on a folder are not propagated to its children** until the next `acl_backfill=true` run, so schedule one periodically (for example weekly).
+
    The job runs `01_graph_delta_ingest.py` → `02b_parse_and_chunk_from_volume.sql` → `03_sync_vector_index.py`.
 4. Tables created in `m365.sharepoint_bronze`: `files` (one row per item), `file_acls` (principals per item), `delta_state` (saved `deltaLink` per drive).
 
 > [!WARNING]
-> **Plan the first load for a large library.** The notebook downloads files one at a time, and ACL capture is one extra Graph call per changed item, so a first load of tens of thousands of files can take many hours and will meet throttling (HTTP 429, handled with `Retry-After`). Run it off-peak, use `capture_acls=false` first, and only add parallelism cautiously, since Graph throttles per app across your whole tenant. Later runs are incremental and small.
+> **Plan the first load for a large library.** The notebook downloads files one at a time, and ACL capture is one extra Graph call per changed item, so a first load of tens of thousands of files can take many hours and will meet throttling (HTTP 429, handled with `Retry-After`). Run it off-peak, use `capture_acls=false` first and then `acl_backfill=true`, and only add parallelism cautiously, since Graph throttles per app across your whole tenant. Later runs are incremental and small.
 
 > [!NOTE]
 > Paths B and C both write `sharepoint_silver.parsed_docs` and `chunks`. Run one corpus pipeline per silver schema, or point them at different catalogs/schemas.
@@ -436,7 +452,7 @@ Agent Bricks → **Knowledge Assistant** → add the ingested UC table (supporte
 Create the index after the first job run has produced `sharepoint_silver.chunks`:
 
 ```bash
-cd terraform && terraform apply -var create_vector_index=true
+(cd terraform && terraform apply -var create_vector_index=true)
 ```
 
 `03_sync_vector_index.py` then syncs it on every job run (`TRIGGERED` index, `databricks-gte-large-en` embeddings by default).
@@ -446,7 +462,19 @@ cd terraform && terraform apply -var create_vector_index=true
 | Level | How | Fails |
 |---|---|---|
 | **Site / library** | Map the caller's Entra groups to readable sites in a table you own (`<catalog>.sharepoint_silver.site_access`: `group_name`, `site_id`) and filter on `source_scope` | **Closed**: no mapping, no results |
-| **Document** *(Path C only)* | Over-fetch, then drop any chunk whose `item_id` has no `file_acls` row for the caller's principals | Closed |
+| **Document** *(Path C only)* | Call with `document_acls=True` and the caller's `principal_ids`. Over-fetch, then drop any chunk whose `item_id` has no `file_acls` row for those principals | **Closed**: `principal_ids=None` raises an error and `[]` returns nothing |
+
+```python
+rows = secure_search("What is the claims escalation process?",
+                     groups=user_groups,                      # Entra groups of the caller
+                     principal_ids=user_principal_ids,        # Path C only
+                     document_acls=True)
+```
+
+Group and principal values are passed through the DataFrame API, not string-built SQL, so they cannot inject SQL.
+
+> [!IMPORTANT]
+> **Trimming only protects callers who go through `secure_search()`.** Give `SELECT` on the silver tables and query access on the index to the agent's service principal (`agent_principal`) only. A user with direct access to the tables or index bypasses every filter. Document-level trimming is only as current as `file_acls`, so run `acl_backfill` periodically (see Path C).
 
 You own the `site_access` mapping (for example refreshed nightly from Entra group membership and your `Sites.Selected` grant list).
 
@@ -586,6 +614,8 @@ For failed Lakeflow pipelines open the failed step → **Update details → Logs
 - [ ] **Secrets:** only in Databricks secret scopes, rotated ≤ 180 days (or certificates / federated credentials)
 - [ ] **Identity:** OAuth only, no long-lived PATs for desktop or agent clients, prod under service principals
 - [ ] **ACL boundary stated explicitly:** Path A enforces M365 permissions live; Paths B and C rely on UC grants plus your own filters. **Never put a corpus with restricted content behind one broadly-queryable Knowledge Assistant**
+- [ ] **No direct access for end users:** only `agent_principal` reads the silver tables and queries the index; users reach content through `secure_search()` or Knowledge Assistant only
+- [ ] **Secret scope:** `READ` limited to the run-as service principal (`secret_reader`) in production
 - [ ] **Data protection:** tag catalogs/tables holding personal information, restrict inference tables, set retention, keep processing in the approved region
 - [ ] **Audit:** `system.access.audit` covers connection use, table access and serving calls; feed it to your SIEM
 - [ ] **Conditional Access:** document the policies applied to the Databricks enterprise apps; test every user persona
@@ -606,11 +636,14 @@ A run on a live Databricks workspace (AWS, serverless, 6 October 2026) against a
 | `02b_parse_and_chunk_from_volume.sql` against a simulated Graph `files` table | ✅ `item_id` populated |
 | Delta Sync index + `secure_search()` | ✅ Correct top document · restricted site never returned to an unmapped group · empty/unknown groups return nothing |
 | `04_monitoring_queries.sql` | ✅ All queries run |
+| Security fixes re-test (13 October 2026) | ✅ `99_e2e_smoke_test.py` PASS with the hardened `secure_search()`: SQL-injection strings in group names match nothing · `document_acls=True` with no principals returns nothing · site trimming unchanged |
+| Path C robustness re-test (9 October 2026) | ✅ Duplicate paths deduplicated · NULL modification time handled · oversize file recorded, not parsed · no-change rerun parsed nothing · empty source leaves silver untouched |
+| Static checks | ✅ `python3 tests/test_helpers.py` (5 pass) · `terraform validate` · `bundle validate` · notebooks compile · scripts pass `bash -n` |
 
 **Bugs found and fixed by that run:** `databricks-vectorsearch` not preinstalled on serverless; the parse notebook re-parsed (and re-billed) every document each run, ignored parse errors and never removed stale chunks.
 
 > [!WARNING]
-> **Not tested** (needs a Microsoft tenant): the SharePoint Unity Catalog connection, the Lakeflow Connect pipeline against real SharePoint, the Entra app and Terraform `apply`, `01_graph_delta_ingest.py` against the real Graph API, Path A, and Knowledge Assistant. Bronze inputs were simulated, so **validate the real connector's output schema** (`DESCRIBE TABLE`) before relying on the column names used in `02`.
+> **Not tested** (needs a Microsoft tenant): the SharePoint Unity Catalog connection, the Lakeflow Connect pipeline against real SharePoint, the Entra app and Terraform `apply`, `01_graph_delta_ingest.py` against the real Graph API, Path A, and Knowledge Assistant. The helper logic in `01` is covered by local unit tests (`python3 tests/test_helpers.py`), but its Graph calls are not. Bronze inputs were simulated, so **validate the real connector's output schema** (`DESCRIBE TABLE`) before relying on the column names used in `02`.
 
 Reproduce the live test with [`tests/README.md`](tests/README.md).
 
